@@ -40,7 +40,7 @@ const checkInterval = setInterval(() => {
   if (!isPassengerPage && !isReviewPage && !isPaymentPage) return;
 
   if (isPaymentPage) {
-    if (hasFilledForThisPage || fillAttempts > 20) return;
+    if (hasFilledForThisPage || fillAttempts > 50) return;
     fillAttempts++;
 
     chrome.storage.local.get(['paymentMode', 'paymentGateway', 'autoPayBook'], (result) => {
@@ -50,55 +50,72 @@ const checkInterval = setInterval(() => {
 
       if (!mode) return;
 
-      // 1. Select the Payment Mode (e.g., BHIM/ UPI/ USSD)
-      const menuItems = Array.from(document.querySelectorAll('.bank-text, span, div, a'));
-      const targetMenu = menuItems.find(el => {
-        const txt = el.textContent.trim();
-        if (mode === 'BHIM_UPI') {
-          return txt === 'BHIM/ UPI' || txt === 'BHIM/ UPI/ USSD' || txt === 'Pay using BHIM UPI';
-        }
-        return false;
+      // 1. Select the Payment Mode Category (Left Menu)
+      const spans = Array.from(document.querySelectorAll('.bank-type span, .col-pad'));
+      const bhimTab = spans.find(el => {
+        const txt = el.textContent.trim().toUpperCase();
+        return txt.includes('BHIM') || txt.includes('UPI/ USSD');
       });
 
-      if (targetMenu) {
-        const clickableMenu = targetMenu.closest('a') || targetMenu;
-        if (!clickableMenu.classList.contains('active-bank')) {
-          clickableMenu.click();
+      if (bhimTab) {
+        const tabContainer = bhimTab.closest('.bank-type') || bhimTab;
+        if (!tabContainer.classList.contains('bank-type-active')) {
+          tabContainer.click();
         }
-      }
 
-      // 2. Select the Gateway/Bank (e.g., PAYTM)
-      const banks = Array.from(document.querySelectorAll('.bank-box, .col-sm-4, .col-xs-12'));
-      const targetBank = banks.find(el => {
-        const txt = el.textContent.trim().toLowerCase();
-        if (gateway === 'PAYTM') {
-          return txt.includes('paytm') || txt.includes('bhim') && txt.includes('paytm');
-        }
-        return false;
-      });
+        // 2. Poll for the Gateway/Bank Option (Right Side only)
+        let pollCount = 0;
+        const pollInterval = setInterval(() => {
+          pollCount++;
+          // Only search within the bank-type container on the right
+          const rightSide = document.querySelector('#bank-type');
+          if (!rightSide) return;
 
-      if (targetBank) {
-        targetBank.click();
-        const radio = targetBank.querySelector('input[type="radio"]');
-        if (radio) radio.click();
-      }
+          const options = Array.from(rightSide.querySelectorAll('.bank-text, .col-pad, span'));
+          const targetBank = options.find(el => {
+            const txt = el.textContent.trim().toUpperCase();
+            if (gateway === 'PAYTM') {
+              // Be very specific to PAYTM to stay away from Amazon Pay
+              return txt.includes('PAYTM');
+            }
+            return false;
+          });
 
-      // 3. Auto click Pay & Book if requested
-      if (autoPay && targetBank) {
-        // Wait a bit for the selection to register
-        setTimeout(() => {
-          const payBtn = Array.from(document.querySelectorAll('button')).find(btn => 
-            btn.textContent.includes('Pay & Book') || 
-            (btn.classList.contains('btn-primary') && btn.textContent.trim() === 'Pay & Book')
-          );
-          
-          if (payBtn && !payBtn.disabled) {
-            payBtn.click();
-            hasFilledForThisPage = true;
+          if (targetBank) {
+            clearInterval(pollInterval);
+            
+            // 3. Force Click the Bank Container
+            const clickable = targetBank.closest('.link') || targetBank.closest('.bank-text') || targetBank;
+            clickable.focus();
+            clickable.click();
+            
+            // Backup click for any images inside
+            const img = clickable.querySelector('img');
+            if (img) img.click();
+
+            // 4. Auto click Pay & Book if requested
+            if (autoPay) {
+              setTimeout(() => {
+                const payBtn = Array.from(document.querySelectorAll('button')).find(btn => 
+                  (btn.innerText || btn.textContent).includes('Pay & Book') && 
+                  btn.classList.contains('btn-primary')
+                );
+                
+                if (payBtn && !payBtn.disabled) {
+                  payBtn.click();
+                  hasFilledForThisPage = true;
+                }
+              }, 1000);
+            } else {
+              hasFilledForThisPage = true;
+            }
           }
-        }, 500);
-      } else if (targetBank) {
-        hasFilledForThisPage = true;
+
+          // If we've polled for 5 seconds without finding it, stop
+          if (pollCount > 25) {
+            clearInterval(pollInterval);
+          }
+        }, 200);
       }
     });
 
@@ -118,105 +135,154 @@ const checkInterval = setInterval(() => {
           if (chrome.runtime.lastError) return;
           if (response && response.success && response.text) {
             const latestImg = document.querySelector('img.captcha-img');
-            // Double check if user didn't refresh captcha while we generated
             if (latestImg && latestImg.src === currentSrc) {
               setNativeValue(captchaInput, response.text);
             }
           } else {
-            lastCaptchaSrc = ""; // reset on fail so it re-attempts later if desired
+            lastCaptchaSrc = "";
           }
         });
-      } catch (e) {
-        if (e.message.includes("Extension context invalidated")) {
-          clearInterval(checkInterval);
-        }
-      }
+      } catch (e) {}
     }
-    return; // Don't run passenger fill logic on this page
+
+    // Auto-click Continue logic
+    if (captchaInput && captchaInput.value.length >= 4) {
+      chrome.storage.local.get(['allowWaitlist'], (result) => {
+        const allowWaitlist = result.allowWaitlist !== undefined ? result.allowWaitlist : true;
+        
+        // Check availability status
+        const isWL = document.querySelector('.WL') !== null;
+        const isAvailable = document.querySelector('.AVAILABLE') !== null;
+        
+        // Logic: Click if it's Available OR if it's WL but user allowed waitlist booking
+        if (isAvailable || (isWL && allowWaitlist)) {
+          const continueBtn = document.querySelector('button.train_Search');
+          if (continueBtn && !continueBtn.disabled) {
+            continueBtn.click();
+          }
+        } else if (isWL && !allowWaitlist) {
+          // Could optionally show a warning on page
+          console.log("Auto-booking stopped: Waitlist not allowed in settings.");
+        }
+      });
+    }
+
+    return;
   }
 
   // Stop trying if we have succeeded or exceeded attempt limit
-  if (hasFilledForThisPage || fillAttempts > 15) return;
+  if (isPassengerPage) {
+    if (hasFilledForThisPage || fillAttempts > 30) return;
 
-  try {
-    chrome.storage.local.get(['passengers', 'paymentMode'], (result) => {
-      const passengers = result.passengers || [];
-      const paymentMode = result.paymentMode;
-    if (passengers.length === 0) return;
+    try {
+      chrome.storage.local.get(['passengers', 'paymentMode', 'autoContinuePsgn'], (result) => {
+        const passengers = result.passengers || [];
+        const paymentMode = result.paymentMode;
+        const autoContinue = result.autoContinuePsgn !== undefined ? result.autoContinuePsgn : true;
+        
+        if (passengers.length === 0) return;
 
-    const currentRows = document.querySelectorAll('app-passenger');
-    
-    // Wait for the outer passenger form container to exist
-    if (currentRows.length === 0) return; 
-    
-    // Wait for the inner inputs to exist (Angular templates load asynchronously)
-    const firstRowInput = currentRows[0].querySelector('input[formcontrolname="passengerAge"]');
-    if (!firstRowInput) return;
+        const currentRows = document.querySelectorAll('app-passenger');
+        if (currentRows.length === 0) return; 
+        
+        const firstRowInput = currentRows[0].querySelector('input[formcontrolname="passengerAge"]');
+        if (!firstRowInput) return;
 
-    // Check if we need to click "+ Add Passenger"
-    if (currentRows.length < passengers.length) {
-      const addBtns = Array.from(document.querySelectorAll('a span.prenext'));
-      const addPassengerBtn = addBtns.find(span => span.textContent.includes('+ Add Passenger'));
-      
-      if (addPassengerBtn) {
-        const clickable = addPassengerBtn.closest('a') || addPassengerBtn;
-        clickable.click();
-        fillAttempts++; // count this as an attempt since sometimes the button might not work gracefully
-        return; // Wait until next interval for the new row to render
-      }
+        // Check if we need to click "+ Add Passenger"
+        if (currentRows.length < passengers.length) {
+          const addPassengerBtn = Array.from(document.querySelectorAll('.prenext')).find(span => 
+            span.textContent.includes('+ Add Passenger')
+          );
+          
+          if (addPassengerBtn) {
+            addPassengerBtn.click();
+            fillAttempts++;
+            return; 
+          }
+        }
+
+        fillAttempts++;
+        let completelyFilled = true;
+
+        passengers.forEach((p, index) => {
+          if (index >= currentRows.length) {
+            completelyFilled = false;
+            return;
+          }
+          
+          const row = currentRows[index];
+          // Aggressive selectors
+          const nameInput = row.querySelector('input[placeholder="Name"], p-autocomplete[formcontrolname="passengerName"] input, input.ui-autocomplete-input');
+          const ageInput = row.querySelector('input[placeholder="Age"], input[formcontrolname="passengerAge"]');
+          const genderSelect = row.querySelector('select[formcontrolname="passengerGender"]');
+          const nationalitySelect = row.querySelector('select[formcontrolname="passengerNationality"]');
+          const berthSelect = row.querySelector('select[formcontrolname="passengerBerthChoice"]');
+
+          // 1. Fill values if missing or different
+          if (nameInput && nameInput.value !== p.name && p.name) {
+             setNativeValue(nameInput, p.name);
+             completelyFilled = false; // Check again in next tick
+          }
+          if (ageInput && ageInput.value !== p.age.toString() && p.age) {
+             setNativeValue(ageInput, p.age.toString());
+             completelyFilled = false;
+          }
+          if (genderSelect && genderSelect.value !== p.gender && p.gender) {
+             setNativeValue(genderSelect, p.gender);
+             completelyFilled = false;
+          }
+          if (nationalitySelect && nationalitySelect.value !== p.nationality && p.nationality) {
+             setNativeValue(nationalitySelect, p.nationality);
+             completelyFilled = false;
+          }
+          if (berthSelect && berthSelect.value !== (p.berth || '') && p.berth) {
+             setNativeValue(berthSelect, p.berth);
+             completelyFilled = false;
+          }
+          
+          // 2. Strict Verification for this row
+          const isNameValid = !p.name || (nameInput && nameInput.value === p.name);
+          const isAgeValid = !p.age || (ageInput && ageInput.value === p.age.toString());
+          const isGenderValid = !p.gender || (genderSelect && genderSelect.value === p.gender);
+          const isNationalityValid = !p.nationality || (nationalitySelect && nationalitySelect.value === p.nationality);
+          const isBerthValid = !p.berth || (berthSelect && (berthSelect.value === p.berth || berthSelect.value === ''));
+
+          if (!isNameValid || !isAgeValid || !isGenderValid || !isNationalityValid || !isBerthValid) {
+            completelyFilled = false;
+            console.log(`Passenger ${index + 1} not ready. Retrying...`);
+          }
+        });
+
+        // 3. Payment Mode Selection Verification
+        if (paymentMode === 'BHIM_UPI') {
+          const upiRadioBox = document.querySelector('p-radiobutton[id="2"] .ui-radiobutton-box, p-radiobutton[label*="BHIM"] .ui-radiobutton-box');
+          if (upiRadioBox) {
+            const isChecked = upiRadioBox.classList.contains('ui-state-active') || upiRadioBox.getAttribute('aria-checked') === 'true';
+            if (!isChecked) {
+              upiRadioBox.click();
+              completelyFilled = false; 
+            }
+          }
+        }
+
+        // 4. Final step: Success and Auto-Continue
+        if (completelyFilled) {
+          hasFilledForThisPage = true;
+          if (autoContinue) {
+            setTimeout(() => {
+              const continueBtn = document.querySelector('button.train_Search');
+              if (continueBtn && !continueBtn.disabled) {
+                continueBtn.click();
+              }
+            }, 500);
+          }
+        }
+      });
+    } catch (e) {
+      console.error("Fill Passenger details error:", e);
     }
-
-    fillAttempts++;
-    let completelyFilled = true;
-
-    passengers.forEach((p, index) => {
-      if (index >= currentRows.length) {
-        completelyFilled = false;
-        return;
-      }
-      
-      const row = currentRows[index];
-
-      const nameInput = row.querySelector('p-autocomplete[formcontrolname="passengerName"] input');
-      const ageInput = row.querySelector('input[formcontrolname="passengerAge"]');
-      const genderSelect = row.querySelector('select[formcontrolname="passengerGender"]');
-      const nationalitySelect = row.querySelector('select[formcontrolname="passengerNationality"]');
-      const berthSelect = row.querySelector('select[formcontrolname="passengerBerthChoice"]');
-
-      if (nameInput && nameInput.value !== p.name && p.name) setNativeValue(nameInput, p.name);
-      if (ageInput && ageInput.value !== p.age.toString() && p.age) setNativeValue(ageInput, p.age.toString());
-      if (genderSelect && genderSelect.value !== p.gender && p.gender) setNativeValue(genderSelect, p.gender);
-      if (nationalitySelect && nationalitySelect.value !== p.nationality && p.nationality) setNativeValue(nationalitySelect, p.nationality);
-      if (berthSelect && !berthSelect.value && p.berth) setNativeValue(berthSelect, p.berth);
-      
-      // Secondary check to ensure value took
-      if ((nameInput && nameInput.value !== p.name && p.name) ||
-          (ageInput && ageInput.value !== p.age.toString() && p.age) ||
-          (genderSelect && genderSelect.value !== p.gender && p.gender)) {
-        completelyFilled = false;
-      }
-    });
-
-    // Auto-select BHIM/UPI in payment options on passenger info page
-    if (paymentMode === 'BHIM_UPI') {
-      const upiRadioBox = document.querySelector('p-radiobutton[id="2"] .ui-radiobutton-box, p-radiobutton[label*="BHIM"] .ui-radiobutton-box');
-      if (upiRadioBox && upiRadioBox.getAttribute('aria-checked') !== 'true') {
-        upiRadioBox.click();
-        completelyFilled = false; // require one more tick to verify it checked
-      }
-    }
-
-    if (completelyFilled) {
-      // Small verification check at the end
-      hasFilledForThisPage = true;
-    }
-  });
-  } catch (e) {
-    if (e.message.includes("Extension context invalidated")) {
-      clearInterval(checkInterval);
-    }
-  }
-}, 800);
+    return;
+  }}, 800);
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "fill_passengers") {

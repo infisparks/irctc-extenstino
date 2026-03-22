@@ -8,8 +8,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const MAX_PASSENGERS = 6;
   
   // Load saved passengers and payment settings
-  chrome.storage.local.get(['passengers', 'paymentMode', 'paymentGateway', 'autoPayBook'], (result) => {
+  chrome.storage.local.get(['passengers', 'paymentMode', 'paymentGateway', 'autoPayBook', 'allowWaitlist', 'autoContinuePsgn'], (result) => {
     let passengers = result.passengers || [];
+    
+    // Load booking settings
+    document.getElementById('allow-waitlist').checked = result.allowWaitlist !== undefined ? result.allowWaitlist : true;
+    document.getElementById('auto-continue-psgn').checked = result.autoContinuePsgn !== undefined ? result.autoContinuePsgn : true;
     
     // Load payment settings
     document.getElementById('payment-mode').value = result.paymentMode || '';
@@ -61,12 +65,16 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    const allowWaitlist = document.getElementById('allow-waitlist').checked;
+    const autoContinuePsgn = document.getElementById('auto-continue-psgn').checked;
     const paymentMode = document.getElementById('payment-mode').value;
     const paymentGateway = document.getElementById('payment-gateway').value;
     const autoPayBook = document.getElementById('auto-pay-book').checked;
     
     chrome.storage.local.set({ 
       passengers, 
+      allowWaitlist,
+      autoContinuePsgn,
       paymentMode, 
       paymentGateway, 
       autoPayBook 

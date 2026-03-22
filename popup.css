@@ -233,12 +233,16 @@ input:focus, select:focus {
   color: var(--danger);
 }
 
-.payment-settings {
+.booking-settings, .payment-settings {
   background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: 10px;
   padding: 16px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.booking-settings {
+  margin-bottom: 12px;
 }
 
 .section-header h2 {
