@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "IRCTC AutoFill Pros",
+  "version": "1.0",
+  "description": "Highly professional extension to autofill passenger details on the IRCTC booking page.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://*.irctc.co.in/*",
+    "https://api.ocr.space/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "IRCTC AutoFill Pros"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.irctc.co.in/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
