@@ -131,18 +131,26 @@ const checkInterval = setInterval(() => {
       lastCaptchaSrc = currentSrc;
 
       try {
+        console.log("IRCTC Helper: Submitting Captcha to background solvers...");
         chrome.runtime.sendMessage({ action: "solve_captcha", base64: currentSrc }, (response) => {
-          if (chrome.runtime.lastError) return;
+          if (chrome.runtime.lastError) {
+             console.error("IRCTC Helper: Message error:", chrome.runtime.lastError.message);
+             return;
+          }
           if (response && response.success && response.text) {
+            console.log("IRCTC Helper: Captcha solved successfully:", response.text);
             const latestImg = document.querySelector('img.captcha-img');
             if (latestImg && latestImg.src === currentSrc) {
               setNativeValue(captchaInput, response.text);
             }
           } else {
+            console.warn("IRCTC Helper: Solvers failed to find text.", response ? response.error : "");
             lastCaptchaSrc = "";
           }
         });
-      } catch (e) {}
+      } catch (e) {
+         console.error("IRCTC Helper: solve_captcha exception:", e);
+      }
     }
 
     // Auto-click Continue logic

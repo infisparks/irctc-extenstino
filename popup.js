@@ -8,7 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const MAX_PASSENGERS = 6;
   
   // Load saved passengers and payment settings
-  chrome.storage.local.get(['passengers', 'paymentMode', 'paymentGateway', 'autoPayBook', 'allowWaitlist', 'autoContinuePsgn'], (result) => {
+  chrome.storage.local.get(['passengers', 'paymentMode', 'paymentGateway', 'autoPayBook', 'allowWaitlist', 'autoContinuePsgn', 'ocrApiKey'], (result) => {
     let passengers = result.passengers || [];
     
     // Load booking settings
@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('auto-continue-psgn').checked = result.autoContinuePsgn !== undefined ? result.autoContinuePsgn : true;
     
     // Load payment settings
+    document.getElementById('ocr-api-key').value = result.ocrApiKey || 'K84095424388957';
     document.getElementById('payment-mode').value = result.paymentMode || '';
     document.getElementById('payment-gateway').value = result.paymentGateway || '';
     document.getElementById('auto-pay-book').checked = result.autoPayBook || false;
@@ -65,6 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    const ocrApiKey = document.getElementById('ocr-api-key').value.trim() || 'helloworld';
     const allowWaitlist = document.getElementById('allow-waitlist').checked;
     const autoContinuePsgn = document.getElementById('auto-continue-psgn').checked;
     const paymentMode = document.getElementById('payment-mode').value;
@@ -73,6 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     chrome.storage.local.set({ 
       passengers, 
+      ocrApiKey,
       allowWaitlist,
       autoContinuePsgn,
       paymentMode, 
