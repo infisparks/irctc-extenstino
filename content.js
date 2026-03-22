@@ -196,14 +196,17 @@ const checkInterval = setInterval(() => {
         const firstRowInput = currentRows[0].querySelector('input[formcontrolname="passengerAge"]');
         if (!firstRowInput) return;
 
-        // Check if we need to click "+ Add Passenger"
+        // SMART TRICK: Rapid-fire add all passengers in early microtasks
         if (currentRows.length < passengers.length) {
-          const addPassengerBtn = Array.from(document.querySelectorAll('.prenext')).find(span => 
+          const addBtn = Array.from(document.querySelectorAll('.prenext')).find(span => 
             span.textContent.includes('+ Add Passenger')
           );
-          
-          if (addPassengerBtn) {
-            addPassengerBtn.click();
+          if (addBtn) {
+            const needed = passengers.length - currentRows.length;
+            for (let i = 0; i < needed; i++) {
+              addBtn.click();
+            }
+            // Give the browser 100ms to render the new rows
             fillAttempts++;
             return; 
           }
@@ -261,14 +264,24 @@ const checkInterval = setInterval(() => {
           }
         });
 
-        // 3. Payment Mode Selection Verification
+        // 3. Payment Mode Selection Verification (Deep-Select Logic)
         if (paymentMode === 'BHIM_UPI') {
-          const upiRadioBox = document.querySelector('p-radiobutton[id="2"] .ui-radiobutton-box, p-radiobutton[label*="BHIM"] .ui-radiobutton-box');
-          if (upiRadioBox) {
-            const isChecked = upiRadioBox.classList.contains('ui-state-active') || upiRadioBox.getAttribute('aria-checked') === 'true';
+          const target = Array.from(document.querySelectorAll('tr, .link, label')).find(el => {
+            const txt = el.textContent || "";
+            return txt.includes('BHIM/UPI') && el.querySelector('p-radiobutton');
+          });
+          
+          if (target) {
+            const upiRadioBox = target.querySelector('.ui-radiobutton-box');
+            const isChecked = upiRadioBox && (upiRadioBox.classList.contains('ui-state-active') || upiRadioBox.getAttribute('aria-checked') === 'true');
+            
             if (!isChecked) {
-              upiRadioBox.click();
+              target.click(); // Row click
+              if (upiRadioBox) upiRadioBox.click(); // Dot click
+              const label = target.querySelector('label');
+              if (label) label.click(); // Label click
               completelyFilled = false; 
+              console.log("IRCTC Helper: BHIM/UPI selected correctly!");
             }
           }
         }
@@ -290,7 +303,7 @@ const checkInterval = setInterval(() => {
       console.error("Fill Passenger details error:", e);
     }
     return;
-  }}, 800);
+  }}, 500);
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "fill_passengers") {
