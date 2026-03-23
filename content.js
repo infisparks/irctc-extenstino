@@ -22,8 +22,18 @@
 
   async function typeHumanStyle(el, text) {
       if (!el) return;
-      el.focus(); el.click();
-      await new Promise(r => setTimeout(r, 100));
+      
+      // 1. Properly clear the input first (Angular-safe)
+      if (el.value !== "") {
+          setNativeValue(el, "");
+          await new Promise(r => setTimeout(r, 50));
+      }
+
+      el.focus(); 
+      el.click();
+      await new Promise(r => setTimeout(r, 50));
+      
+      // 2. Type out the real value
       el.value = "";
       for (let char of text) {
           el.value += char;
@@ -32,10 +42,13 @@
           await new Promise(r => setTimeout(r, 10));
       }
       el.dispatchEvent(new Event('change', { bubbles: true }));
+      
+      // 3. Click out to close the calendar popup
       document.body.click(); 
   }
 
   // --- MODULE 1: HOME PAGE (SEARCH) ---
+  
   function handleHomeSearch() {
     if (!chrome.runtime?.id) return;
     if (!window.location.href.toLowerCase().includes('train-search') && !window.location.href.endsWith('nget/')) return;
