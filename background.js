@@ -1,66 +1,96 @@
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "solve_captcha" && request.base64) {
+// Professional IRCTC Captcha Solver - High Stability Version
+const OCR_CONFIG = {
+  apiKey: "K84095424388957",
+  timeout: 4500
+};
+
+// --- HELPER 1: IMAGE CLEANER (Pre-Processing) ---
+async function cleanCaptchaImage(imageUrl) {
+  return new Promise((resolve, reject) => {
+    // We use OffscreenCanvas for Background Service Workers
+    const canvas = new OffscreenCanvas(200, 60); 
+    const ctx = canvas.getContext('2d');
     
-    // We will race multiple solvers and take the fastest one that works
-    chrome.storage.local.get(['ocrApiKey'], (result) => {
-      const apikey = result.ocrApiKey || "K84095424388957"; // Use user's private key as default
-
-      const solveWithEngine = (engine) => {
-        const formData = new URLSearchParams();
-        formData.append("base64Image", request.base64);
-        formData.append("language", "eng");
-        formData.append("OCREngine", engine);
-
-        return fetch("https://api.ocr.space/parse/image", {
-          method: "POST",
-          headers: {
-            "apikey": apikey,
-            "Content-Type": "application/x-www-form-urlencoded"
-          },
-          body: formData.toString()
-        }).then(res => res.json());
-      };
-
-      // RUN BOTH ENGINES IN PARALLEL
-      console.log("IRCTC Helper: Starting Parallel Captcha Solving...");
-      
-      Promise.all([
-        solveWithEngine("2"), // Engine 2 is usually faster
-        solveWithEngine("1")  // Engine 1 is sometimes more robust
-      ])
-      .then(results => {
-        // Find the best valid result from the engines
-        let finalOutput = null;
+    // We fetch the image as a Blob first to avoid CORS issues
+    fetch(imageUrl)
+      .then(response => response.blob())
+      .then(blob => createImageBitmap(blob))
+      .then(imgBitmap => {
+        ctx.drawImage(imgBitmap, 0, 0);
         
-        results.forEach((data, index) => {
-          const engineNum = index === 0 ? "2" : "1";
-          if (data && data.ParsedResults && data.ParsedResults.length > 0) {
-             let text = data.ParsedResults[0].ParsedText || "";
-             text = text.replace(/[^a-zA-Z0-9]/g, '').trim();
-             console.log(`IRCTC Helper: Engine ${engineNum} suggested: "${text}"`);
-             
-             if (text.length >= 3 && !finalOutput) {
-               finalOutput = text;
-             }
-          } else {
-            console.warn(`IRCTC Helper: Engine ${engineNum} failed or returned no text.`, data);
-          }
-        });
-
-        if (finalOutput) {
-          console.log(`IRCTC Helper: Decided to use: "${finalOutput}"`);
-          sendResponse({ success: true, text: finalOutput });
-        } else {
-          console.error("IRCTC Helper: Multi-Engine Failure. Both engines returned nothing useful.");
-          sendResponse({ success: false, error: "Multi-Engine Failure" });
+        // Thresholding: Make it pure Black & White (Removes Noise)
+        let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        let data = imageData.data;
+        for (let i = 0; i < data.length; i += 4) {
+          let avg = (data[i] + data[i+1] + data[i+2]) / 3;
+          let val = avg > 160 ? 255 : 0; // Threshold logic
+          data[i] = data[i+1] = data[i+2] = val;
         }
+        ctx.putImageData(imageData, 0, 0);
+        
+        canvas.convertToBlob().then(blob => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result); // Base64
+          reader.readAsDataURL(blob);
+        });
       })
-      .catch(error => {
-        console.error("IRCTC Helper: OCR Network Error:", error.message);
-        sendResponse({ success: false, error: error.message });
-      });
+      .catch(reject);
+  });
+}
+
+// --- ENGINE: API SOLVER (OCR.space) ---
+async function solveRemote(base64Image, engine = 2) {
+  try {
+    const formData = new FormData();
+    formData.append("base64Image", base64Image);
+    formData.append("apikey", OCR_CONFIG.apiKey);
+    formData.append("OCREngine", engine);
+    formData.append("scale", "true");
+
+    const response = await fetch("https://api.ocr.space/parse/image", {
+      method: "POST",
+      body: formData
     });
 
-    return true; // Keep the message channel open
+    const data = await response.json();
+    if (data.ParsedResults && data.ParsedResults[0]) {
+      // PROTECT @, =, and + characters
+      const text = data.ParsedResults[0].ParsedText.replace(/[^A-Za-z0-9@=+]/g, "").trim();
+      console.log(`IRCTC Captcha: Solved (${engine}) -> ${text}`);
+      return text;
+    }
+    return null;
+  } catch (err) {
+    console.error(`IRCTC Captcha: Engine ${engine} failed.`);
+    return null;
+  }
+}
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "get_captcha_text") {
+    (async () => {
+      try {
+        console.log("IRCTC Captcha: Cleaning image and solving...");
+        const cleanImage = await cleanCaptchaImage(request.url).catch(() => request.url);
+
+        // Race two engines for speed
+        const results = await Promise.race([
+          solveRemote(cleanImage, 2),
+          new Promise((resolve) => setTimeout(() => resolve(null), OCR_CONFIG.timeout))
+        ]);
+
+        if (results && results.length >= 4) {
+          sendResponse({ text: results });
+        } else {
+          // Fallback if race timed out
+          const retry = await solveRemote(cleanImage, 1);
+          sendResponse({ text: retry });
+        }
+      } catch (e) {
+         console.error("Captcha Solve Error:", e);
+         sendResponse({ text: "" });
+      }
+    })();
+    return true; // Keep channel open
   }
 });

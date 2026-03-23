@@ -1,315 +1,309 @@
-function setNativeValue(element, value) {
-  if (!element || !value) return;
-  element.focus();
-  element.value = value;
-  
-  const prototype = Object.getPrototypeOf(element);
-  const prototypeValueSetter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
-  const valueSetter = Object.getOwnPropertyDescriptor(element, 'value')?.set;
-  
-  if (prototypeValueSetter && valueSetter !== prototypeValueSetter) {
-    try { prototypeValueSetter.call(element, value); } catch(e){}
-  } else if (valueSetter) {
-    try { valueSetter.call(element, value); } catch(e){}
-  }
-  
-  element.dispatchEvent(new Event('input', { bubbles: true }));
-  element.dispatchEvent(new Event('change', { bubbles: true }));
-  element.dispatchEvent(new Event('blur', { bubbles: true }));
-}
+(function() {
+  let hasFilledHome = false;
+  let _hasClickedBhimTab = false;
+  let _hasClickedPaytm = false;
 
-let currentUrl = window.location.href;
-let hasFilledForThisPage = false;
-let fillAttempts = 0;
-let lastCaptchaSrc = "";
-
-const checkInterval = setInterval(() => {
-  // Track URL changes to reset state for new booking flows
-  if (currentUrl !== window.location.href) {
-    currentUrl = window.location.href;
-    hasFilledForThisPage = false;
-    fillAttempts = 0;
-    lastCaptchaSrc = "";
+  function setNativeValue(element, value) {
+    if (!element) return;
+    element.focus();
+    element.value = value;
+    const valueSetter = Object.getOwnPropertyDescriptor(element, 'value')?.set;
+    const prototype = Object.getPrototypeOf(element);
+    const prototypeValueSetter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+    if (prototypeValueSetter && valueSetter !== prototypeValueSetter) {
+       prototypeValueSetter.call(element, value);
+    } else if (valueSetter) {
+       valueSetter.call(element, value);
+    }
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    element.dispatchEvent(new Event('blur', { bubbles: true }));
   }
 
-  const isPassengerPage = window.location.href.includes('nget/booking/psgninput');
-  const isReviewPage = window.location.href.includes('nget/booking/reviewBooking');
-  const isPaymentPage = window.location.href.includes('nget/payment/bkgPaymentOptions');
+  async function typeHumanStyle(el, text) {
+      if (!el) return;
+      el.focus(); el.click();
+      await new Promise(r => setTimeout(r, 100));
+      el.value = "";
+      for (let char of text) {
+          el.value += char;
+          el.dispatchEvent(new KeyboardEvent('keydown', { key: char, bubbles: true }));
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          await new Promise(r => setTimeout(r, 10));
+      }
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      document.body.click(); 
+  }
 
-  // Only run on the actual passenger form, review page, or payment page
-  if (!isPassengerPage && !isReviewPage && !isPaymentPage) return;
+  // --- MODULE 1: HOME PAGE (SEARCH) ---
+  function handleHomeSearch() {
+    if (!chrome.runtime?.id) return;
+    if (!window.location.href.toLowerCase().includes('train-search') && !window.location.href.endsWith('nget/')) return;
+    if (hasFilledHome) return;
 
-  if (isPaymentPage) {
-    if (hasFilledForThisPage || fillAttempts > 50) return;
-    fillAttempts++;
+    chrome.storage.local.get(['fromStation', 'toStation', 'journeyDate'], async (result) => {
+      const { fromStation: fVal, toStation: tVal, journeyDate: dVal } = result;
+      if (!fVal || !tVal || !dVal) return;
 
-    chrome.storage.local.get(['paymentMode', 'paymentGateway', 'autoPayBook'], (result) => {
-      const mode = result.paymentMode;
-      const gateway = result.paymentGateway;
-      const autoPay = result.autoPayBook;
+      const fromInp = document.querySelector('p-autocomplete[formcontrolname="origin"] input');
+      const toInp = document.querySelector('p-autocomplete[formcontrolname="destination"] input');
+      const dateInp = document.querySelector('p-calendar[formcontrolname="journeyDate"] input, #jDate input');
 
-      if (!mode) return;
+      if (!fromInp || !toInp || !dateInp) return;
 
-      // 1. Select the Payment Mode Category (Left Menu)
-      const spans = Array.from(document.querySelectorAll('.bank-type span, .col-pad'));
-      const bhimTab = spans.find(el => {
-        const txt = el.textContent.trim().toUpperCase();
-        return txt.includes('BHIM') || txt.includes('UPI/ USSD');
+      // Smart Check
+      const needsUpdate = !fromInp.value.toUpperCase().includes(fVal.toUpperCase()) || 
+                          !toInp.value.toUpperCase().includes(tVal.toUpperCase()) || 
+                          dateInp.value !== dVal;
+
+      if (!needsUpdate) return;
+
+      console.log("IRCTC Helper: Modular Search Engine Triggered...");
+      
+      // Parallel Fill
+      setNativeValue(fromInp, fVal);
+      setTimeout(() => {
+        document.querySelectorAll('.ui-autocomplete-items li').forEach(li => {
+          if (li.textContent.toUpperCase().includes(fVal.toUpperCase())) li.click();
+        });
+      }, 1000);
+
+      setNativeValue(toInp, tVal);
+      setTimeout(() => {
+        document.querySelectorAll('.ui-autocomplete-items li').forEach(li => {
+          if (li.textContent.toUpperCase().includes(tVal.toUpperCase())) li.click();
+        });
+      }, 1000);
+
+      await typeHumanStyle(dateInp, dVal);
+
+      setTimeout(() => {
+        document.querySelector('button.train_Search')?.click();
+        hasFilledHome = true;
+      }, 1500);
+    });
+  }
+
+  // --- MODULE 2: PASSENGER DETAILS PAGE ---
+  function handlePassengerDetails() {
+    if (!chrome.runtime?.id) return;
+    if (!window.location.href.toLowerCase().includes('psgninput')) return;
+
+    chrome.storage.local.get(['passengers', 'paymentMode', 'autoContinuePsgn'], (settings) => {
+      const psgns = settings.passengers;
+      if (!psgns || psgns.length === 0) return;
+
+      // 1. Detect how many rows ARE VISIBLE by looking for the Name inputs
+      const nameInputs = document.querySelectorAll('p-autocomplete[formcontrolname="passengerName"] input, input[placeholder="Name"]');
+      const rowCount = nameInputs.length;
+
+      // 2. Add Rows Rapidly if needed (Using Text-Search for higher accuracy)
+      const addBtn = Array.from(document.querySelectorAll('a, span, button')).find(el => el.textContent.includes('+ Add Passenger'));
+      
+      if (addBtn && rowCount < psgns.length) {
+        console.log(`IRCTC Helper: Rapid-fire adding all ${psgns.length} rows...`);
+        for (let i = rowCount; i < psgns.length; i++) {
+          addBtn.click();
+        }
+        return; // Wait for one heartbeat to let IRCTC render the rows
+      }
+
+      let completelyFilled = true;
+
+      // 3. Bulk Fill all visible rows
+      psgns.forEach((p, i) => {
+        // Find the "Row" which is a parent of the name input
+        const nameInp = nameInputs[i];
+        if (!nameInp) return;
+        
+        // Find the container for this specific passenger
+        const row = nameInp.closest('app-passenger') || nameInp.closest('.passenger-row') || nameInp.closest('.row');
+        if (!row) return;
+
+        const a = row.querySelector('input[formcontrolname="passengerAge"], input[placeholder="Age"]');
+        const g = row.querySelector('select[formcontrolname="passengerGender"], select.form-control');
+        const b = row.querySelector('select[formcontrolname="passengerBerthChoice"], select.form-control:nth-of-type(2)');
+
+        // Fill Name
+        if (nameInp.value !== p.name) { 
+          setNativeValue(nameInp, p.name); 
+          completelyFilled = false; 
+        }
+        // Fill Age
+        if (a && a.value !== p.age) { 
+          setNativeValue(a, p.age); 
+          completelyFilled = false; 
+        }
+        // Select Gender
+        if (g && g.value !== p.gender) { 
+          g.value = p.gender; 
+          g.dispatchEvent(new Event('change', { bubbles: true })); 
+          completelyFilled = false; 
+        }
+        // Select Berth
+        if (b && p.berth && b.value !== p.berth) { 
+          b.value = p.berth; 
+          b.dispatchEvent(new Event('change', { bubbles: true })); 
+          completelyFilled = false; 
+        }
       });
 
-      if (bhimTab) {
-        const tabContainer = bhimTab.closest('.bank-type') || bhimTab;
-        if (!tabContainer.classList.contains('bank-type-active')) {
-          tabContainer.click();
+      // 3. BHIM/UPI Deep Select
+      if (settings.paymentMode === 'BHIM_UPI') {
+        const target = Array.from(document.querySelectorAll('tr, .link, label')).find(el => 
+            el.textContent.includes('BHIM/UPI') && el.querySelector('p-radiobutton')
+        );
+        if (target) {
+          const radio = target.querySelector('.ui-radiobutton-box');
+          if (radio && !radio.classList.contains('ui-state-active') && radio.getAttribute('aria-checked') !== 'true') {
+            target.click(); radio.click(); target.querySelector('label')?.click();
+            completelyFilled = false;
+          }
         }
+      }
 
-        // 2. Poll for the Gateway/Bank Option (Right Side only)
-        let pollCount = 0;
-        const pollInterval = setInterval(() => {
-          pollCount++;
-          // Only search within the bank-type container on the right
-          const rightSide = document.querySelector('#bank-type');
-          if (!rightSide) return;
-
-          const options = Array.from(rightSide.querySelectorAll('.bank-text, .col-pad, span'));
-          const targetBank = options.find(el => {
-            const txt = el.textContent.trim().toUpperCase();
-            if (gateway === 'PAYTM') {
-              // Be very specific to PAYTM to stay away from Amazon Pay
-              return txt.includes('PAYTM');
-            }
-            return false;
-          });
-
-          if (targetBank) {
-            clearInterval(pollInterval);
-            
-            // 3. Force Click the Bank Container
-            const clickable = targetBank.closest('.link') || targetBank.closest('.bank-text') || targetBank;
-            clickable.focus();
-            clickable.click();
-            
-            // Backup click for any images inside
-            const img = clickable.querySelector('img');
-            if (img) img.click();
-
-            // 4. Auto click Pay & Book if requested
-            if (autoPay) {
-              setTimeout(() => {
-                const payBtn = Array.from(document.querySelectorAll('button')).find(btn => 
-                  (btn.innerText || btn.textContent).includes('Pay & Book') && 
-                  btn.classList.contains('btn-primary')
-                );
-                
-                if (payBtn && !payBtn.disabled) {
-                  payBtn.click();
-                  hasFilledForThisPage = true;
-                }
-              }, 1000);
-            } else {
-              hasFilledForThisPage = true;
-            }
-          }
-
-          // If we've polled for 5 seconds without finding it, stop
-          if (pollCount > 25) {
-            clearInterval(pollInterval);
-          }
-        }, 200);
+      // 4. Auto Continue
+      if (completelyFilled && settings.autoContinuePsgn) {
+        document.querySelector('button.train_Search, button[type="submit"].btn-primary')?.click();
       }
     });
-
-    return;
   }
 
-  if (isReviewPage) {
-    const captchaImg = document.querySelector('img.captcha-img');
-    const captchaInput = document.querySelector('input[id="captcha"]');
 
-    if (captchaImg && captchaInput && captchaImg.src !== lastCaptchaSrc && captchaImg.src.startsWith('data:image')) {
-      const currentSrc = captchaImg.src;
-      lastCaptchaSrc = currentSrc;
-
-      try {
-        console.log("IRCTC Helper: Submitting Captcha to background solvers...");
-        chrome.runtime.sendMessage({ action: "solve_captcha", base64: currentSrc }, (response) => {
-          if (chrome.runtime.lastError) {
-             console.error("IRCTC Helper: Message error:", chrome.runtime.lastError.message);
-             return;
-          }
-          if (response && response.success && response.text) {
-            console.log("IRCTC Helper: Captcha solved successfully:", response.text);
-            const latestImg = document.querySelector('img.captcha-img');
-            if (latestImg && latestImg.src === currentSrc) {
-              setNativeValue(captchaInput, response.text);
+  function handleOtherPages() {
+    if (!chrome.runtime?.id) return;
+    chrome.storage.local.get(['allowWaitlist', 'paymentMode', 'autoPayBook'], (settings) => {
+        // Review Page
+        if (window.location.href.includes('reviewBooking')) {
+            const avail = document.querySelector('.avail-info')?.textContent || "";
+            const ok = avail.includes('AVAILABLE') || avail.includes('CURR_AVBL') || (avail.includes('WL') && settings.allowWaitlist);
+            const captchaInput = document.querySelector('#captcha');
+            if (ok && captchaInput && captchaInput.value.length >= 4) {
+               document.querySelector('button.btn-primary[type="submit"]')?.click();
             }
-          } else {
-            console.warn("IRCTC Helper: Solvers failed to find text.", response ? response.error : "");
-            lastCaptchaSrc = "";
-          }
+        }
+        // --- MODULE 3: REVIEW & PAYMENT ---
+        if (window.location.href.includes('bkgPaymentOptions')) {
+            try {
+                // Reusable function to simulate an unstoppable human click
+                const triggerClick = (el) => {
+                    if (!el) return;
+                    el.click(); // Standard click
+                    // Fire Native DOM Events to bypass Angular ignores
+                    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+                    el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+                    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                };
+
+                // 1. Find all potential interactive containers on the page
+                const allContainers = Array.from(document.querySelectorAll('[tabindex="0"], .link, .bank-type'));
+                
+                // 2. Identify the Tab
+                const tab = allContainers.find(el => {
+                    const txt = (el.textContent || "").toUpperCase();
+                    return txt.includes('BHIM') && txt.includes('UPI') && txt.includes('USSD');
+                });
+
+                // 3. Identify the Paytm Option Box
+                const paytmOption = allContainers.find(el => {
+                    const txt = (el.textContent || "").toUpperCase();
+                    return txt.includes('PAY USING BHIM') && txt.includes('PAYTM');
+                });
+
+                // 4. Verify Selection States from IRCTC HTML
+                const isTabOpen = tab && (tab.classList.contains('bank-type-active') || tab.classList.contains('active'));
+                
+                // When selected, IRCTC adds 'dull-back' class and an `.fa-check-circle` orange checkmark
+                const isOptionSelected = paytmOption && (
+                    paytmOption.classList.contains('dull-back') || 
+                    paytmOption.querySelector('.fa-check-circle') || 
+                    paytmOption.querySelector('.bank-checked')
+                );
+
+                // ACTION A: Open the Tab
+                if (tab && !isTabOpen && !paytmOption) {
+                    if (tab.dataset.clicked !== 'true') {
+                        console.log("IRCTC Pro: Opening BHIM/UPI/USSD Tab!");
+                        tab.dataset.clicked = 'true';
+                        triggerClick(tab);
+                    }
+                    return; // Wait for options to render
+                }
+
+                // ACTION B: Select the Paytm Option
+                if (paytmOption && !isOptionSelected) {
+                    if (paytmOption.dataset.clicked !== 'true') {
+                        console.log("IRCTC Pro: Force-Clicking PAYTM Option Container!");
+                        paytmOption.dataset.clicked = 'true';
+                        triggerClick(paytmOption);
+                    }
+                    return; // Wait for IRCTC to confirm selection (orange checkmark)
+                }
+
+                // ACTION C: Pay & Book (Only triggers AFTER selection is confirmed by the checkmark)
+                if (isOptionSelected && settings.autoPayBook) {
+                    const finalBtn = Array.from(document.querySelectorAll('button')).find(b => 
+                        (b.textContent || "").toUpperCase().includes('PAY & BOOK') && 
+                        !b.classList.contains('hidden-xs') // Desktop vs Mobile safety
+                    ) || Array.from(document.querySelectorAll('button')).find(b => 
+                        (b.textContent || "").toUpperCase().includes('PAY & BOOK')
+                    );
+                    
+                    if (finalBtn && finalBtn.dataset.clicked !== 'true') {
+                        console.log("IRCTC Pro: Payment Method Selected ✅ Clicking 'Pay & Book'!");
+                        finalBtn.dataset.clicked = 'true';
+                        
+                        // Wait 800ms to mimic human reflex and ensure Angular state is stable
+                        setTimeout(() => triggerClick(finalBtn), 800);
+                    }
+                }
+            } catch (error) {
+                console.error("IRCTC Payment Module Error:", error);
+            }
+        }
+    });
+  }
+
+  // --- MODULE 4: AUTO-CAPTCHA SOLVER ---
+  function handleCaptcha() {
+    if (!chrome.runtime?.id) return;
+    const img = document.querySelector('.captcha-img, #captcha-img');
+    const input = document.querySelector('#captcha, .captcha-input');
+    
+    // Only solve if input is empty and we haven't already tried solving THIS image
+    if (img && input && input.value === "" && img.dataset.solving !== img.src) {
+        img.dataset.solving = img.src; // Mark this specific image as "in-progress"
+        console.log("IRCTC Helper: New Captcha detected! Solving...");
+
+        chrome.runtime.sendMessage({ action: "get_captcha_text", url: img.src }, (resp) => {
+            if (resp && resp.text) {
+                setNativeValue(input, resp.text);
+                console.log(`IRCTC Helper: Captcha Solved -> ${resp.text}`);
+                // Don't clear solving state so we don't resolve the same image twice
+            } else {
+                img.dataset.solving = ""; // Allow retry if it failed
+            }
         });
-      } catch (e) {
-         console.error("IRCTC Helper: solve_captcha exception:", e);
-      }
     }
-
-    // Auto-click Continue logic
-    if (captchaInput && captchaInput.value.length >= 4) {
-      chrome.storage.local.get(['allowWaitlist'], (result) => {
-        const allowWaitlist = result.allowWaitlist !== undefined ? result.allowWaitlist : true;
-        
-        // Check availability status
-        const isWL = document.querySelector('.WL') !== null;
-        const isAvailable = document.querySelector('.AVAILABLE') !== null;
-        
-        // Logic: Click if it's Available OR if it's WL but user allowed waitlist booking
-        if (isAvailable || (isWL && allowWaitlist)) {
-          const continueBtn = document.querySelector('button.train_Search');
-          if (continueBtn && !continueBtn.disabled) {
-            continueBtn.click();
-          }
-        } else if (isWL && !allowWaitlist) {
-          // Could optionally show a warning on page
-          console.log("Auto-booking stopped: Waitlist not allowed in settings.");
-        }
-      });
-    }
-
-    return;
   }
 
-  // Stop trying if we have succeeded or exceeded attempt limit
-  if (isPassengerPage) {
-    if (hasFilledForThisPage || fillAttempts > 30) return;
+  // --- MASTER TICKER ---
+  setInterval(() => {
+    handleHomeSearch();
+    handlePassengerDetails();
+    handleOtherPages();
+    handleCaptcha();
+  }, 500);
 
-    try {
-      chrome.storage.local.get(['passengers', 'paymentMode', 'autoContinuePsgn'], (result) => {
-        const passengers = result.passengers || [];
-        const paymentMode = result.paymentMode;
-        const autoContinue = result.autoContinuePsgn !== undefined ? result.autoContinuePsgn : true;
-        
-        if (passengers.length === 0) return;
-
-        const currentRows = document.querySelectorAll('app-passenger');
-        if (currentRows.length === 0) return; 
-        
-        const firstRowInput = currentRows[0].querySelector('input[formcontrolname="passengerAge"]');
-        if (!firstRowInput) return;
-
-        // SMART TRICK: Rapid-fire add all passengers in early microtasks
-        if (currentRows.length < passengers.length) {
-          const addBtn = Array.from(document.querySelectorAll('.prenext')).find(span => 
-            span.textContent.includes('+ Add Passenger')
-          );
-          if (addBtn) {
-            const needed = passengers.length - currentRows.length;
-            for (let i = 0; i < needed; i++) {
-              addBtn.click();
-            }
-            // Give the browser 100ms to render the new rows
-            fillAttempts++;
-            return; 
-          }
-        }
-
-        fillAttempts++;
-        let completelyFilled = true;
-
-        passengers.forEach((p, index) => {
-          if (index >= currentRows.length) {
-            completelyFilled = false;
-            return;
-          }
-          
-          const row = currentRows[index];
-          // Aggressive selectors
-          const nameInput = row.querySelector('input[placeholder="Name"], p-autocomplete[formcontrolname="passengerName"] input, input.ui-autocomplete-input');
-          const ageInput = row.querySelector('input[placeholder="Age"], input[formcontrolname="passengerAge"]');
-          const genderSelect = row.querySelector('select[formcontrolname="passengerGender"]');
-          const nationalitySelect = row.querySelector('select[formcontrolname="passengerNationality"]');
-          const berthSelect = row.querySelector('select[formcontrolname="passengerBerthChoice"]');
-
-          // 1. Fill values if missing or different
-          if (nameInput && nameInput.value !== p.name && p.name) {
-             setNativeValue(nameInput, p.name);
-             completelyFilled = false; // Check again in next tick
-          }
-          if (ageInput && ageInput.value !== p.age.toString() && p.age) {
-             setNativeValue(ageInput, p.age.toString());
-             completelyFilled = false;
-          }
-          if (genderSelect && genderSelect.value !== p.gender && p.gender) {
-             setNativeValue(genderSelect, p.gender);
-             completelyFilled = false;
-          }
-          if (nationalitySelect && nationalitySelect.value !== p.nationality && p.nationality) {
-             setNativeValue(nationalitySelect, p.nationality);
-             completelyFilled = false;
-          }
-          if (berthSelect && berthSelect.value !== (p.berth || '') && p.berth) {
-             setNativeValue(berthSelect, p.berth);
-             completelyFilled = false;
-          }
-          
-          // 2. Strict Verification for this row
-          const isNameValid = !p.name || (nameInput && nameInput.value === p.name);
-          const isAgeValid = !p.age || (ageInput && ageInput.value === p.age.toString());
-          const isGenderValid = !p.gender || (genderSelect && genderSelect.value === p.gender);
-          const isNationalityValid = !p.nationality || (nationalitySelect && nationalitySelect.value === p.nationality);
-          const isBerthValid = !p.berth || (berthSelect && (berthSelect.value === p.berth || berthSelect.value === ''));
-
-          if (!isNameValid || !isAgeValid || !isGenderValid || !isNationalityValid || !isBerthValid) {
-            completelyFilled = false;
-            console.log(`Passenger ${index + 1} not ready. Retrying...`);
-          }
-        });
-
-        // 3. Payment Mode Selection Verification (Deep-Select Logic)
-        if (paymentMode === 'BHIM_UPI') {
-          const target = Array.from(document.querySelectorAll('tr, .link, label')).find(el => {
-            const txt = el.textContent || "";
-            return txt.includes('BHIM/UPI') && el.querySelector('p-radiobutton');
-          });
-          
-          if (target) {
-            const upiRadioBox = target.querySelector('.ui-radiobutton-box');
-            const isChecked = upiRadioBox && (upiRadioBox.classList.contains('ui-state-active') || upiRadioBox.getAttribute('aria-checked') === 'true');
-            
-            if (!isChecked) {
-              target.click(); // Row click
-              if (upiRadioBox) upiRadioBox.click(); // Dot click
-              const label = target.querySelector('label');
-              if (label) label.click(); // Label click
-              completelyFilled = false; 
-              console.log("IRCTC Helper: BHIM/UPI selected correctly!");
-            }
-          }
-        }
-
-        // 4. Final step: Success and Auto-Continue
-        if (completelyFilled) {
-          hasFilledForThisPage = true;
-          if (autoContinue) {
-            setTimeout(() => {
-              const continueBtn = document.querySelector('button.train_Search');
-              if (continueBtn && !continueBtn.disabled) {
-                continueBtn.click();
-              }
-            }, 500);
-          }
-        }
-      });
-    } catch (e) {
-      console.error("Fill Passenger details error:", e);
+  // Captcha Listener
+  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "solve_captcha") {
+       const img = document.querySelector('#captcha-img, .captcha-img');
+       if (img) {
+         chrome.runtime.sendMessage({ action: "get_captcha_text", url: img.src }, (resp) => {
+            if (resp && resp.text) setNativeValue(document.querySelector('#captcha, .captcha-input'), resp.text);
+         });
+       }
     }
-    return;
-  }}, 500);
-
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "fill_passengers") {
-    hasFilledForThisPage = false;
-    fillAttempts = 0;
-    sendResponse({ success: true });
-  }
-  return true;
-});
+  });
+})();

@@ -7,9 +7,14 @@ document.addEventListener('DOMContentLoaded', () => {
   
   const MAX_PASSENGERS = 6;
   
-  // Load saved passengers and payment settings
-  chrome.storage.local.get(['passengers', 'paymentMode', 'paymentGateway', 'autoPayBook', 'allowWaitlist', 'autoContinuePsgn', 'ocrApiKey'], (result) => {
+  // Load saved passengers and settings
+  chrome.storage.local.get(['passengers', 'fromStation', 'toStation', 'journeyDate', 'paymentMode', 'paymentGateway', 'autoPayBook', 'allowWaitlist', 'autoContinuePsgn', 'ocrApiKey'], (result) => {
     let passengers = result.passengers || [];
+    
+    // Load journey details
+    document.getElementById('from-station').value = result.fromStation || 'LTT';
+    document.getElementById('to-station').value = result.toStation || 'PPTA';
+    document.getElementById('journey-date').value = result.journeyDate || '22/05/2026';
     
     // Load booking settings
     document.getElementById('allow-waitlist').checked = result.allowWaitlist !== undefined ? result.allowWaitlist : true;
@@ -66,21 +71,27 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    const ocrApiKey = document.getElementById('ocr-api-key').value.trim() || 'helloworld';
-    const allowWaitlist = document.getElementById('allow-waitlist').checked;
-    const autoContinuePsgn = document.getElementById('auto-continue-psgn').checked;
     const paymentMode = document.getElementById('payment-mode').value;
     const paymentGateway = document.getElementById('payment-gateway').value;
     const autoPayBook = document.getElementById('auto-pay-book').checked;
+    const allowWaitlist = document.getElementById('allow-waitlist').checked;
+    const autoContinuePsgn = document.getElementById('auto-continue-psgn').checked;
+    const ocrApiKey = document.getElementById('ocr-api-key').value;
+    const fromStation = document.getElementById('from-station').value || 'LTT';
+    const toStation = document.getElementById('to-station').value || 'PPTA';
+    const journeyDate = document.getElementById('journey-date').value || '22/05/2026';
     
     chrome.storage.local.set({ 
       passengers, 
-      ocrApiKey,
-      allowWaitlist,
-      autoContinuePsgn,
+      fromStation,
+      toStation,
+      journeyDate,
       paymentMode, 
       paymentGateway, 
-      autoPayBook 
+      autoPayBook,
+      allowWaitlist,
+      autoContinuePsgn,
+      ocrApiKey
     }, () => {
       showStatus('All details saved perfectly!', 'success');
       
